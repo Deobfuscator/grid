@@ -1,5 +1,16 @@
 package com.sparrowsoftware.grid;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.function.Function;
@@ -9,7 +20,10 @@ import java.util.function.Supplier;
  * First cut of remote execution.
  */
 public class RemoteTaskRunner implements TaskRunner {
+    private static final Logger log = LogManager.getLogger(RemoteTaskRunner.class);
 
+    private ServerSocket socket;
+    private List<Thread> clientThreads = new ArrayList<>();
     private Queue<PromiseImpl<?>> tasks = new LinkedBlockingDeque<>();
 
     class PromiseImpl<T> implements Promise<T> {
@@ -98,10 +112,42 @@ public class RemoteTaskRunner implements TaskRunner {
         }
     }
 
+    class ClientThread extends Thread {
+        private Socket socket;
+        private Throwable err;
+
+        public ClientThread(Socket socket) {
+            this.socket = socket;
+        }
+
+        public void run() {
+            try {
+                InputStream is = socket.getInputStream();
+                OutputStream os = socket.getOutputStream();
+            } catch (Throwable err) {
+                this.err = err;
+            }
+        }
+    }
+
     @Override
     public <T> Promise<T> execute(Supplier<T> task) {
         PromiseImpl promise = new PromiseImpl(task);
         tasks.add(promise);
         return promise;
+    }
+
+    public RemoteTaskRunner(int port, int backlog, InetAddress address) throws IOException {
+        socket = new ServerSocket(port, backlog, address);
+        log.debug("Running RemoteTaskRunner. Port={}, backlog={}, address={}", port, backlog, address);
+    }
+
+    public void run() throws IOException {
+        while(true) {
+            Socket clientSocket = socket.accept();
+            ClientThread clientThread = new ClientThread(clientSocket);
+            clientThreads.add(clientThread);
+            clientThread.start();
+        }
     }
 }
